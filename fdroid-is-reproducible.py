@@ -15,67 +15,83 @@
 #
 # --                                                            ; }}}1
 
-# requires: git, python3-click, python3-yaml
+# requires: python3-click
 
-import glob
 import json
 import os
-import subprocess
 import urllib.request
+import time
+import xml.etree.ElementTree as ET
+
+from pathlib import Path
 
 import click
-import yaml
 
-FDROIDDATA = "https://gitlab.com/fdroid/fdroiddata.git"
-VERIFIED_JSON = "https://verification.f-droid.org/verified.json"
+INDEX_XML_URL = "https://f-droid.org/repo/index.xml"
+VERIFIED_JSON_URL = "https://verification.f-droid.org/verified.json"
+DATADIR = Path.home() / ".cache" / "fdroid-is-reproducible"
+INDEX_XML = str(DATADIR / "index.xml")
+VERIFIED_JSON = str(DATADIR / "verified.json")
+METADATA_JSON = str(DATADIR / "metadata.json")
 
 
-def download_metadata():
-    if not os.path.exists("fdroiddata"):
-        clone_cmd = "git clone --depth 1".split() + [FDROIDDATA]
-        subprocess.run(clone_cmd, check=True)
-    if not os.path.exists("metadata.json"):
+def download_index():
+    if _outdated(INDEX_XML):
+        with urllib.request.urlopen(INDEX_XML_URL) as fi:
+            with open(INDEX_XML, "wb") as fo:
+                fo.write(fi.read())
+    if _outdated(METADATA_JSON):
         apps = {}
-        for f in sorted(glob.glob("fdroiddata/metadata/*.yml")):
-            with open(f) as fh:
-                appid = os.path.splitext(os.path.basename(f))[0]
-                data = yaml.safe_load(fh)
-                name = data.get("Name") or data.get("AutoName") or ""
-                apps[appid] = dict(
-                    name=name, version=data["CurrentVersion"],
-                    vercode=data["CurrentVersionCode"]
-                )
-        with open("metadata.json", "w") as fh:
+        with open(INDEX_XML) as fh:
+            for e in ET.parse(fh).getroot():
+                if e.tag != "application":
+                    continue
+                appid = e.find("id").text.strip()
+                name = e.find("name").text.strip()
+                version = e.find("marketversion").text.strip()
+                vercode = int(e.find("marketvercode").text.strip())
+                apps[appid] = dict(name=name, version=version, vercode=vercode)
+        with open(METADATA_JSON, "w") as fh:
             json.dump(apps, fh)
 
 
 def download_verified():
-    if not os.path.exists("verified.json"):
-        with urllib.request.urlopen(VERIFIED_JSON) as fi:
-            with open("verified.json", "wb") as fo:
+    if _outdated(VERIFIED_JSON):
+        with urllib.request.urlopen(VERIFIED_JSON_URL) as fi:
+            with open(VERIFIED_JSON, "wb") as fo:
                 fo.write(fi.read())
 
 
 def load_metadata():
-    with open("metadata.json") as fh:
+    with open(METADATA_JSON) as fh:
         return json.load(fh)
 
 
 def load_verified():
-    with open("verified.json") as fh:
+    with open(VERIFIED_JSON) as fh:
         return json.load(fh)
+
+
+def _outdated(file):
+    if not os.path.exists(file):
+        return True
+    if time.time() - os.stat(file).st_mtime > 24*60*60:
+        return True
+    return False
 
 
 @click.command(help="FIXME")
 @click.option("--search", is_flag=True)
 @click.argument("query")
 def cli(search, query):
-    download_metadata()
+    DATADIR.mkdir(parents=True, exist_ok=True)
+    download_index()
     download_verified()
     apps = load_metadata()
     verified = load_verified()["packages"]
     if search:
-        items = ((k, v) for k, v in apps.items() if query in v["name"])
+        items = ((k, v) for k, v in apps.items()
+                 if query.lower() in v["name"].lower())
     else:
         items = ((query, apps[query]),) if query in apps else ()
     for appid, data in items:
