@@ -19,8 +19,9 @@
 
 import json
 import os
-import urllib.request
+import sys
 import time
+import urllib.request
 import xml.etree.ElementTree as ET
 
 from pathlib import Path
@@ -35,12 +36,14 @@ VERIFIED_JSON = str(DATADIR / "verified.json")
 METADATA_JSON = str(DATADIR / "metadata.json")
 
 
-def download_index():
-    if _outdated(INDEX_XML):
+def download_index(force_refresh=False):
+    if force_refresh or _outdated(INDEX_XML):
+        print("==> downloading index.xml...", file=sys.stderr)
         with urllib.request.urlopen(INDEX_XML_URL) as fi:
             with open(INDEX_XML, "wb") as fo:
                 fo.write(fi.read())
-    if _outdated(METADATA_JSON):
+    if force_refresh or _outdated(METADATA_JSON):
+        print("==> parsing index.xml...", file=sys.stderr)
         apps = {}
         with open(INDEX_XML) as fh:
             for e in ET.parse(fh).getroot():
@@ -55,8 +58,9 @@ def download_index():
             json.dump(apps, fh)
 
 
-def download_verified():
-    if _outdated(VERIFIED_JSON):
+def download_verified(force_refresh=False):
+    if force_refresh or _outdated(VERIFIED_JSON):
+        print("==> downloading verified.json...", file=sys.stderr)
         with urllib.request.urlopen(VERIFIED_JSON_URL) as fi:
             with open(VERIFIED_JSON, "wb") as fo:
                 fo.write(fi.read())
@@ -80,13 +84,15 @@ def _outdated(file):
     return False
 
 
+# FIXME
 @click.command(help="FIXME")
-@click.option("--search", is_flag=True)
+@click.option("--search", is_flag=True, help="FIXME")
+@click.option("--force-refresh", is_flag=True, help="FIXME")
 @click.argument("query")
-def cli(search, query):
+def cli(search, force_refresh, query):
     DATADIR.mkdir(parents=True, exist_ok=True)
-    download_index()
-    download_verified()
+    download_index(force_refresh)
+    download_verified(force_refresh)
     apps = load_metadata()
     verified = load_verified()["packages"]
     if search:
